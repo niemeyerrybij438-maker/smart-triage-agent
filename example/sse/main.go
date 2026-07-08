@@ -80,7 +80,11 @@ func initializeBot(ctx context.Context) error {
 		return fmt.Errorf("new chat model fail,err:%s", err)
 	}
 
-	gormSql, err := NewMysqlGrom("root:123456@tcp(127.0.0.1:3306)/aggo", logger.Silent)
+	dbDSN := os.Getenv("MYSQL_DSN")
+	if dbDSN == "" {
+		dbDSN = "root:123456@tcp(127.0.0.1:3306)/aggo"
+	}
+	gormSql, err := NewMysqlGrom(dbDSN, logger.Silent)
 	if err != nil {
 		return fmt.Errorf("创建数据库连接失败: %v", err)
 	}
