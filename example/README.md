@@ -1,78 +1,101 @@
-# AGGO 示例
+# AGGO 智能导诊示例
 
-本目录是独立 Go 模块：
+这是一个基于 AGGO/Eino 的多 Agent 智能导诊应用，包含患者对话端、医生工作台、导诊记录和医生处理审计。
 
-```bash
-cd example
-go mod download
+## 核心流程
+
+```text
+患者消息
+→ 主导诊 Agent（多轮记忆）
+→ 高风险场景 Review Agent
+→ 患者最终回答
+→ 记录提取 Agent
+→ MySQL 导诊记录
+→ 医生工作台
 ```
 
-模块内使用：
+## 主要功能
 
-```go
-replace github.com/CoolBanHub/aggo => ../
+- 患者端流式多轮导诊
+- 危险信号紧急升级
+- 特殊人群和用药问题二次审核
+- 自动提取 `P1/P2/P3`、推荐科室和就诊准备
+- 医生登录、备注、状态处理和操作审计
+- 页面通过 Go `embed` 打包进可执行文件
+
+## 环境要求
+
+- Go 1.24 或兼容版本
+- MySQL 8.x
+- OpenAI 兼容模型接口
+
+## 配置
+
+在仓库根目录创建 `.env`：
+
+```powershell
+Copy-Item .\example\.env.example .\.env
 ```
 
-这样示例会引用当前本地检出版本，而不是已发布的模块版本。
+必须配置 `BaseUrl` 和 `APIKey`。完整配置见 `example/.env.example`，`MYSQL_DSN` 指定的数据库需要提前创建。
 
-## 运行示例
+## 启动
 
-除特别说明外，请在 `example/` 目录下运行命令：
+在仓库根目录运行：
 
-```bash
-go run ./simple_agent
-go run ./mem_agent_test
-go run ./mem0_agent_test
-go run ./cron_test
-go run ./sse
-go run ./tool_test
-go run ./callback_test
-go run ./adk_test
-go run ./vision_test
-go run ./generate_img_test
-go run ./skill_agent_test
+```powershell
+.\example\start.cmd
 ```
 
-知识库示例可以使用 PostgreSQL/pgvector 或 Milvus。请先启动需要的服务：
+指定端口：
 
-```bash
-cd knowledge_agent_tool_test
-./pg_docker.sh
-# or
-./milvus_docker.sh
-cd ..
-go run ./knowledge_agent_tool_test
+```powershell
+.\example\start.cmd -Port 8090
 ```
 
-`example/claw` 刻意隔离为独立模块：
+默认地址：
 
-```bash
-cd example/claw
-go mod download
-go run .
+- 患者端：`http://localhost:8080`
+- 医生端：`http://localhost:8080/doctor`
+- 登录页：`http://localhost:8080/doctor/login`
+
+## 测试
+
+```powershell
+.\example\test.cmd
 ```
 
-## 环境变量
+等价命令：
 
-多数示例通过各自 `main.go` 读取环境变量，用于配置 OpenAI 兼容模型。常用变量包括：
-
-```bash
-BaseUrl=https://api.openai.com/v1
-ApiKey=your-api-key
-Model=gpt-4o-mini
-EmbeddingModel=text-embedding-3-large
+```powershell
+cd .\example
+go test ./sse
+go vet ./sse
 ```
 
-可选集成会使用自己的变量，例如 Langfuse 和 AILens360 凭证。
+数据库 API 测试使用 SQL Mock，不会连接或修改真实 MySQL 数据。
 
-## 测试边界
+## 代码结构
 
-根模块执行 `go test ./...` 时不会包含本目录，因为 `example/` 有自己的 `go.mod`。
-若要验证示例可以编译，请运行：
-
-```bash
-cd example
-go test ./...
-cd claw
-go test ./...
+```text
+example/sse/
+|-- main.go
+|-- triage_agent.go
+|-- review_agent.go
+|-- extraction_agent.go
+|-- doctor_auth.go
+|-- triage_records.go
+|-- database.go
+|-- pages.go
+|-- web/
+|   |-- patient.html
+|   |-- doctor.html
+|   `-- doctor_login.html
+`-- *_test.go
 ```
+
+## 安全说明
+
+- 生产环境必须修改默认医生密码。
+- `.env` 已被 Git 忽略，不要提交真实 API Key 或数据库密码。
+- 本应用用于导诊辅助，不提供医学确诊，不能替代医生诊疗。
