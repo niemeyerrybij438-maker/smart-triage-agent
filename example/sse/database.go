@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -33,5 +36,27 @@ func NewMysqlGrom(source string, logLevel logger.LogLevel) (*gorm.DB, error) {
 
 	gdb.Logger = gormLogger
 
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		return nil, err
+	}
+	maxOpen := positiveEnvInt("DB_MAX_OPEN_CONNS", 30)
+	maxIdle := positiveEnvInt("DB_MAX_IDLE_CONNS", 10)
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+	sqlDB.SetMaxOpenConns(maxOpen)
+	sqlDB.SetMaxIdleConns(maxIdle)
+	sqlDB.SetConnMaxLifetime(time.Duration(positiveEnvInt("DB_CONN_MAX_LIFETIME_MINUTES", 30)) * time.Minute)
+	sqlDB.SetConnMaxIdleTime(time.Duration(positiveEnvInt("DB_CONN_MAX_IDLE_MINUTES", 5)) * time.Minute)
+
 	return gdb, nil
+}
+
+func positiveEnvInt(name string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }

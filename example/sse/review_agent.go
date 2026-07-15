@@ -30,13 +30,10 @@ func reviewInstruction() string {
 }
 
 func needsAnswerReview(message string) bool {
-	keywords := []string{"\u836f", "\u6297\u751f\u7d20", "\u5242\u91cf", "\u600e\u4e48\u5403", "\u80f8\u75db", "\u80f8\u95f7", "\u547c\u5438\u56f0\u96be", "\u5598\u4e0d\u4e0a\u6c14", "\u610f\u8bc6", "\u660f\u8ff7", "\u62bd\u6410", "\u5927\u51fa\u8840", "\u5355\u4fa7\u65e0\u529b", "\u54b3\u8840", "\u5b55\u5987", "\u6000\u5b55", "\u5b55\u671f", "\u513f\u7ae5", "\u5b9d\u5b9d", "\u5a74\u513f", "\u8001\u4eba", "\u9ad8\u9f84", "\u6162\u6027\u75c5", "\u8fc7\u654f"}
-	for _, keyword := range keywords {
-		if strings.Contains(message, keyword) {
-			return true
-		}
-	}
-	return false
+	return hasPositiveDispatchKeyword(message,
+		"药", "抗生素", "剂量", "怎么吃", "胸痛", "胸闷", "呼吸困难", "喘不上气", "意识", "昏迷", "抽搐", "大出血", "单侧无力", "咳血",
+		"孕妇", "怀孕", "孕期", "儿童", "宝宝", "婴儿", "老人", "高龄", "慢性病", "过敏",
+	)
 }
 
 func collectAgentReply(ctx context.Context, runner *adk.TypedRunner[*schema.AgenticMessage], messages []*schema.AgenticMessage, options ...adk.AgentRunOption) (string, error) {
@@ -62,11 +59,20 @@ func collectAgentReply(ctx context.Context, runner *adk.TypedRunner[*schema.Agen
 }
 
 func reviewAnswer(ctx context.Context, userMessage, draft string) (string, reviewResult, error) {
+	return reviewAnswerWithKnowledge(ctx, userMessage, "", draft)
+}
+
+func reviewAnswerWithKnowledge(ctx context.Context, userMessage, knowledgeContext, draft string) (string, reviewResult, error) {
 	result := reviewResult{Approved: true, Answer: strings.TrimSpace(draft)}
 	if globalReviewRunner == nil {
 		return result.Answer, result, nil
 	}
-	prompt := strings.Join([]string{"<user_message>", userMessage, "</user_message>", "<draft_answer>", draft, "</draft_answer>", "\u8bf7\u6839\u636e\u5ba1\u6838\u89c4\u5219\u8f93\u51fa JSON\u3002"}, "\n")
+	promptParts := []string{"<user_message>", userMessage, "</user_message>"}
+	if strings.TrimSpace(knowledgeContext) != "" {
+		promptParts = append(promptParts, knowledgeContext)
+	}
+	promptParts = append(promptParts, "<draft_answer>", draft, "</draft_answer>", "\u8bf7\u6839\u636e\u5ba1\u6838\u89c4\u5219\u8f93\u51fa JSON\u3002")
+	prompt := strings.Join(promptParts, "\n")
 	reviewText, err := collectAgentReply(ctx, globalReviewRunner, []*schema.AgenticMessage{schema.UserAgenticMessage(prompt)})
 	if err != nil {
 		return result.Answer, result, err

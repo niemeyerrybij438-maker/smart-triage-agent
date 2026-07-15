@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/mysql"
@@ -78,10 +79,16 @@ func TestTriageRecordStatusPersistsAuditAndNote(t *testing.T) {
 	resetDoctorSessions(t)
 	cookie := loginDoctorForTest(t, "\u674e\u533b\u751f")
 
+	row := sqlmock.NewRows([]string{"id", "session_id", "status"}).AddRow(7, "session-7", "viewed")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `triage_records` WHERE `triage_records`.`id` = ? ORDER BY `triage_records`.`id` LIMIT ?")).WithArgs(7, 1).WillReturnRows(row)
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE `triage_records` SET `doctor_note`=?,`handled_by`=?,`processed_at`=?,`status`=? WHERE id = ?")).
 		WithArgs("follow up tomorrow", "\u674e\u533b\u751f", sqlmock.AnyArg(), "processed", 7).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `follow_up_notifications`").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE `follow_up_plans`").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	body := bytes.NewBufferString(`{"id":7,"status":"processed","doctorNote":" follow up tomorrow "}`)
@@ -117,5 +124,61 @@ func TestTriageRecordStatusRejectsInvalidStatusBeforeDatabaseWrite(t *testing.T)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unexpected database write: %v", err)
+	}
+}
+
+func TestTriageRecordsRejectAnonymousSessionLookup(t *testing.T) {
+	db, mock := newMockGormDB(t)
+	useGlobalDBForTest(t, db)
+	resetDoctorSessions(t)
+	resetPatientServices(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/triage-records?sessionId=other-session", nil)
+	res := httptest.NewRecorder()
+	triageRecordsHandler(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", res.Code, http.StatusUnauthorized)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpsertTriageRecordPreservesExistingProfileSnapshot(t *testing.T) {
+	db, mock := newMockGormDB(t)
+	useGlobalDBForTest(t, db)
+	existing := sqlmock.NewRows([]string{"id", "session_id", "patient_phone", "patient_profile", "symptom", "status", "created_at"}).
+		AddRow(7, "snapshot-session", "13800138000", `{"age":30}`, "old symptom", "pending", time.Now())
+	mock.ExpectQuery("SELECT \\* FROM `triage_records` WHERE session_id = \\?").WithArgs("snapshot-session", 1).WillReturnRows(existing)
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `triage_records` SET").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `escalation_tickets` SET").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	err := upsertTriageRecord(SaveTriageRecordRequest{SessionID: "snapshot-session", PatientPhone: "13800138000", PatientProfile: `{"age":40}`, Symptom: "new symptom", RiskLevel: "P3", Department: "general", Status: "pending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTriageRecordStatusRejectsRollback(t *testing.T) {
+	db, mock := newMockGormDB(t)
+	useGlobalDBForTest(t, db)
+	resetDoctorSessions(t)
+	cookie := loginDoctorForTest(t, "Doctor")
+	row := sqlmock.NewRows([]string{"id", "session_id", "status"}).AddRow(7, "session-7", "processed")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `triage_records` WHERE `triage_records`.`id` = ? ORDER BY `triage_records`.`id` LIMIT ?")).WithArgs(7, 1).WillReturnRows(row)
+	request := httptest.NewRequest(http.MethodPost, "/api/triage-records/status", bytes.NewBufferString(`{"id":7,"status":"viewed"}`))
+	request.AddCookie(cookie)
+	response := httptest.NewRecorder()
+	triageRecordStatusHandler(response, request)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -9,6 +9,7 @@ func TestNeedsAnswerReview(t *testing.T) {
 		want    bool
 	}{
 		{name: "ordinary symptom", message: "\u6211\u6709\u70b9\u5e72\u54b3\uff0c\u6ca1\u6709\u53d1\u70e7", want: false},
+		{name: "negated emergency symptom", message: "\u4e24\u5929\u4e86\uff0c\u6ca1\u6709\u80f8\u75db\uff0c\u4e5f\u6ca1\u6709\u547c\u5438\u56f0\u96be", want: false},
 		{name: "pregnancy medication", message: "\u6211\u662f\u5b55\u5987\uff0c\u5e72\u54b3\uff0c\u53ef\u4ee5\u5403\u4ec0\u4e48\u836f", want: true},
 		{name: "emergency", message: "\u6211\u80f8\u75db\uff0c\u800c\u4e14\u5598\u4e0d\u4e0a\u6c14", want: true},
 		{name: "child", message: "\u513f\u7ae5\u53d1\u70e7\u5e94\u8be5\u600e\u4e48\u529e", want: true},

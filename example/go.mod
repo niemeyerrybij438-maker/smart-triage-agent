@@ -120,6 +120,7 @@ require (
 	github.com/opencontainers/runtime-spec v1.0.2 // indirect
 	github.com/panjf2000/ants/v2 v2.11.3 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
+	github.com/phpdave11/gofpdf v1.4.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect

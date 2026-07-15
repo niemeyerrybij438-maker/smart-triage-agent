@@ -1,0 +1,58 @@
+name: Basic CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  go-quality:
+    name: Go test, vet and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: example/go.mod
+          cache-dependency-path: |
+            go.sum
+            example/go.sum
+
+      - name: Run unit tests
+        working-directory: example
+        run: go test ./sse ./cmd/perfcheck -count=1
+
+      - name: Run static checks
+        working-directory: example
+        run: go vet ./sse ./cmd/perfcheck
+
+      - name: Build application
+        working-directory: example
+        run: go build -o aggo-sse-ci ./sse
+
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify Docker image build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: aggo-triage:ci

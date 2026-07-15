@@ -1,705 +1,308 @@
-# AGGO - Go AI Agent 框架
+# 多 Agent 智能导诊平台
 
 [![Go 版本](https://img.shields.io/badge/Go-%3E%3D%201.24.6-blue)](https://golang.org/)
 [![许可证](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![CloudWeGo Eino](https://img.shields.io/badge/powered%20by-CloudWeGo%20Eino-orange)](https://github.com/cloudwego/eino)
-[![Eino 版本](https://img.shields.io/badge/Eino-0.9.5-blue)](https://github.com/cloudwego/eino)
+[![Basic CI](https://github.com/niemeyerrybij438-maker/smart-triage-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/niemeyerrybij438-maker/smart-triage-agent/actions/workflows/ci.yml)
+[![技术底座](https://img.shields.io/badge/Powered%20by-AGGO%20%2B%20Eino-orange)](https://github.com/cloudwego/eino)
+[![架构](https://img.shields.io/badge/Architecture-Harness%20%2B%20Loop%20Engine-7c3aed)](./docs/TECHNICAL_SPECIFICATION.md)
+[![RAG](https://img.shields.io/badge/RAG-Enabled-059669)](./docs/TECHNICAL_SPECIFICATION.md)
+[![AI Review](https://img.shields.io/badge/AI%20Review-2--Round%20Loop-2563eb)](./docs/TECHNICAL_SPECIFICATION.md)
 
-AGGO 是一个基于 Go 语言和 [CloudWeGo Eino](https://github.com/cloudwego/eino) 框架构建的企业级 AI Agent 框架，提供完整的对话 AI、知识管理、记忆系统、定时任务和工具调用能力。
+面向患者、医生和平台管理员的三端智能导诊系统。系统以 `TriageHarness` 统一管理运行状态，强制执行医疗知识 RAG，通过多 Agent 完成症状理解、风险分级与科室推荐，再由 Loop Engine 驱动 AI Review 最多两轮审核收敛，并将导诊、人工复核、预约和 Agent 轨迹串成可追溯业务闭环。
 
-> **⚠️ 版本兼容性说明**: 本项目使用 **Eino 0.9.5** 版本。由于 Eino 框架的 API 重大变更，采用了最新的 AgenticMessage 设计，**AGGO 0.3 版本与 0.2 版本不兼容**，升级前请确保使用正确的 Eino 版本。
->
-> **为什么不保持兼容？** 新版本的设计更符合 Agent 的语义规范，且引入兼容层会增加代码复杂度、影响可维护性。在 AI 辅助编程普及的当下，升级现有项目的成本已大幅降低。
+> **医疗安全声明：** 本系统用于就医前分诊辅助和流程协同，不提供疾病诊断、处方或治疗方案，不能替代医生面诊、急诊服务和医疗机构正式意见。
 
-## ✨ 核心特性
+## 项目概览
 
-### 🤖 智能代理系统
-- **ReAct 模式代理**: 基于 CloudWeGo Eino ADK 的 ReAct (Reasoning + Acting) 模式实现
-- **工具调用**: 原生支持多种工具集成，包括知识库、数据库、Shell 命令等
-- **多轮对话**: 上下文感知的多轮对话能力
-- **流式响应**: 基于 SSE (Server-Sent Events) 的实时流式输出
-- **定时任务代理**: 预配置的 CronAgent，开箱即用的定时任务管理
+| 项目 | 说明 |
+| --- | --- |
+| 项目名称 | 多 Agent 智能导诊平台 |
+| 服务对象 | 患者、医生、平台管理员 |
+| 核心目标 | 降低患者挂号选择成本，提前结构化采集信息，识别高风险场景并提升分诊协同效率 |
+| 技术栈 | Go、AGGO、CloudWeGo Eino、MySQL、SSE、RAG、Harness、Loop Engine、百度地图 |
+| 系统形态 | 患者端 + 医生端 + 管理端 + 医疗知识库 + Agent 可观测链路 |
+| 项目代码 | [`example/`](./example) |
+| RAG 状态 | 已进入导诊固定链路；公开可追溯知识 Top 3 检索 |
+| 质量控制 | AI Review 最多两轮；每轮结果写入 Agent 轨迹 |
+| 运行编排 | Triage Harness + 有界 Loop Engine |
 
-### 🧠 记忆管理系统
-- **会话记忆**: 自动管理会话级别的对话历史
-- **长期记忆**: 支持用户级别的长期记忆存储
-- **智能摘要**: 自动生成会话摘要，优化上下文长度
-- **多后端支持**: 内置 `builtin` provider，并支持接入外部 `memu`、`mem0` 记忆服务
-- **历史上下文注入**: `builtin` 按最近 N 条会话消息补充上下文，并支持会话摘要和事件检索模式
-- **灵活存储**: 支持内存存储和 SQL 存储（MySQL、PostgreSQL、SQLite）
-- **异步处理**: 基于工作池的异步任务处理，提升响应性能
-- **智能清理**: 支持定期清理和外部注入的清理策略
+## 三端入口
 
-详细说明见 [memory/README.md](./memory/README.md)。
+服务默认运行在 `http://localhost:8080`。
 
-### ⏰ 定时任务系统
-- **多种调度方式**: 支持一次性定时(at)、周期定时(every)、Cron表达式(cron)
-- **多种存储后端**: 支持文件存储、GORM存储（MySQL、PostgreSQL、SQLite）
-- **分布式锁**: 支持分布式环境下的任务锁定
-- **任务数量限制**: 支持全局和单用户任务数量上限
-- **自动清理**: 一次性任务执行后自动删除
+| 端 | 登录入口 | 主要能力 |
+| --- | --- | --- |
+| 患者端 | `http://localhost:8080/patient/login` | 验证码登录、健康档案、多轮导诊、报告历史、预约、宿迁医院地图与导航 |
+| 医生端 | `http://localhost:8080/doctor/login` | 待处理患者、风险报告、协同诊断、人工复核、急诊通道、预约确认与 PDF 导出 |
+| 管理端 | `http://localhost:8080/admin/login` | 导诊分析、Agent 轨迹、工单与预约监控、风险规则、账号权限、系统配置与审计 |
 
-### 📚 向量数据库集成
-- **Milvus**: 基于 [eino-ext/milvus2](https://github.com/cloudwego/eino-ext) 官方组件，使用 ANN + COSINE 检索并支持 `ScoreThreshold` 过滤
-- **PostgreSQL + pgvector**: 轻量级向量搜索方案
-- **统一接口**: 提供一致的 `Database` 接口（`indexer.Indexer` + `retriever.Retriever`）
+账号由父目录私有 `.env` 中的环境变量管理。不要将真实账号、密码、模型密钥、数据库 DSN、短信服务密钥或百度地图 AK 提交到仓库。
 
-详细说明见 [database/README.md](./database/README.md)。
+## 业务闭环
 
-### 🛠️ 丰富的工具生态
-- **知识库工具**: 文档加载、语义搜索、向量检索
-- **数据库工具**: MySQL、PostgreSQL 操作工具
-- **Shell 工具**: 安全的系统命令执行
-- **定时任务工具**: 添加、查看、删除、启用/禁用定时任务
-- **可扩展**: 易于集成自定义工具
-
-### 🤖 多模型支持
-- **OpenAI 兼容模型**: 支持 OpenAI 和其他 OpenAI API 兼容服务
-- **GLM 模型**: 原生支持智谱 GLM 系列模型，包含 Thinking 模式
-- **推理强度参数**: 支持 low、medium、high 推理强度配置
-
-### 📊 可观测性
-- **Langfuse 集成**: AI 应用监控和追踪
-- **AILens360 集成**: 支持通过代理注入用户、会话和 trace 维度
-- **日志管理**: 结构化日志记录
-- **回调追踪**: 基于 Eino callbacks 接入模型和工具调用链路
-
-## 🏗️ 系统架构
-
-```
-┌──────────────────────────── AGGO 框架 ────────────────────────────┐
-│  代理层：ReAct Agent、CronAgent、多轮对话、流式响应                 │
-│  记忆层：会话记忆、长期记忆、自动摘要、异步处理                     │
-│  工具层：知识库、数据库、Shell、定时任务工具                        │
-│  存储与向量层：Milvus、PostgreSQL、内存存储、SQL/GORM 存储           │
-│  调度层：一次性任务、周期任务、Cron 表达式、文件/GORM 存储           │
-│  模型与嵌入层：OpenAI 兼容模型、GLM、Embedding、推理参数             │
-│  可观测层：Langfuse 追踪、结构化日志、SSE 事件流                    │
-└───────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    Patient[患者登录] --> Profile[健康档案]
+    Profile --> Triage[多 Agent 导诊]
+    Triage --> Result[风险评估与科室推荐]
+    Result --> Record[导诊报告与记录]
+    Result --> Ticket{需要人工复核}
+    Ticket -- 是 --> Review[人工复核工单]
+    Ticket -- 否 --> Appointment[预约挂号]
+    Review --> Doctor[医生处理]
+    Appointment --> Doctor
+    Doctor --> Admin[管理端分析、审计与运营监控]
+    Record --> Admin
 ```
 
-## 📦 安装
+导诊、预约、人工复核工单和 Agent 轨迹以 `sessionId` 关联，便于从管理端或医生端回溯同一次患者导诊过程。
 
-### 前置要求
+## 多 Agent 协作
 
-- **Go**: >= 1.24.6
-- **向量数据库** (二选一):
-  - [Milvus](https://milvus.io/) >= 2.6 (推荐用于生产环境)
-  - [PostgreSQL](https://www.postgresql.org/) >= 14 + [pgvector](https://github.com/pgvector/pgvector) 扩展
-- **AI 模型服务**:
-  - OpenAI API 兼容的服务 (OpenAI 或其他兼容服务)
-- **可选依赖**:
-  - [Langfuse](https://langfuse.com/) - AI 应用监控和追踪
+系统并非单一聊天机器人，而是由 Triage Harness 管理运行状态、Loop Engine 驱动 AI Review 收敛，并由主控 Agent 编排专业节点完成业务处理：
 
-### 安装框架
+1. **意图识别**：判断用户诉求和是否进入医疗导诊流程。
+2. **医疗知识 RAG 与病史摘要**：检索公开可追溯的分诊知识，并融合当前对话与患者档案。
+3. **风险评估**：输出 `P1`、`P2`、`P3` 分级，并识别需要急诊提示的情形。
+4. **科室推荐**：给出首选科室、备选科室、推荐依据与就诊准备事项。
+5. **条件化分析**：按需执行急症识别或用药安全分析。
+6. **监督汇总**：主控 Agent 协调各节点结果，生成面向患者的导诊建议。
+7. **AI Review Loop 与记录提取**：最多两轮检查并修正安全表达，写入结构化导诊记录和 Agent 执行轨迹。
 
-```bash
-go get github.com/CoolBanHub/aggo
+详细设计请查看 [`docs/MULTI_AGENT_ARCHITECTURE.md`](./docs/MULTI_AGENT_ARCHITECTURE.md)。
+
+## 运行架构与质量控制
+
+每次患者导诊都由 `TriageHarness` 管理完整运行状态，而不是由页面直接串行调用多个模型：
+
+```text
+患者消息 + 健康档案
+  -> 会话记忆检索 + 医疗知识 RAG（Top 3、带来源）
+  -> 主导诊 Agent
+  -> Intent 调度与专业 Agent 并发分析
+  -> Supervisor 汇总
+  -> AI Review Loop（最多 2 轮修正）
+  -> SSE 返回结果
+  -> 异步保存导诊记录、预约/工单关联和 Agent 轨迹
 ```
 
-### 安装依赖
+- RAG 初始知识来自 MedlinePlus、WHO 等公开资料，覆盖胸痛/呼吸困难、卒中、大出血、发热、呼吸道、腹痛和用药过敏边界；每条知识都保存来源 URL。
+- `medical-knowledge-rag`、`main-triage`、专业 Agent、`supervisor`、`ai-review` 都写入 Agent 轨迹，管理端可按会话回溯。
+- AI Review 负责检查急症遗漏、过度诊断、用药越界和特殊人群风险；循环有上限，避免无限调用。
+- 公开资料只作为分诊参考，不输出诊断或个体化处方；高风险规则不会因 RAG 未命中而被降低。
+## 核心能力
 
-```bash
-go mod download
+### 患者端
+
+- 手机验证码登录；开发环境使用本地验证码，生产环境可接入短信服务。
+- 健康档案维护、BMI 计算、历史对话和新建会话。
+- 多 Agent 导诊进度、风险分级、科室推荐、就诊提醒。
+- 导诊报告搜索、筛选、排序、分页与 PDF 下载。
+- 宿迁医院地图、定位和导航。
+- 预约挂号、状态查看与确认前取消。
+
+### 医生端
+
+- 按风险、状态和时间筛选待处理患者。
+- 查看患者档案、导诊记录和风险报告历史。
+- 协同诊断、人工复核工单处理与 P1 急诊绿色通道。
+- 预约确认、完成处理和导诊报告 PDF 导出。
+- 随访任务中心按优先级汇总待反馈、逾期、已完成和异常升级任务，支持多条件筛选、报告联动与下一轮随访创建。
+- 医生确认处理完成后，分诊记录、人工复核工单和异常随访任务同步收口，避免同一业务在不同页面显示冲突状态。
+- 医生处置方式、处置意见、处理人和处理时间持久化保存，并通过患者通知、三端页面和管理端 CSV 形成可追溯回传链路。
+
+### 管理端
+
+- 导诊记录与风险统计分析。
+- Agent 轨迹按会话、节点、状态和耗时筛选。
+- 人工复核 SLA、后端截止时间、超时自动升级和关联导诊/轨迹跳转。
+- 预约监控、风险规则、医疗知识审核/启停/版本治理、医生账号与权限管理。
+- 平台配置持久化与管理员审计日志。
+
+## 技术架构
+
+```text
+前端页面（患者端 / 医生端 / 管理端）
+        │
+        ▼
+Go HTTP + SSE 服务（example/sse）
+        │
+        ├── 认证与权限控制
+        ├── 多 Agent 导诊编排（AGGO + Eino）
+        ├── 导诊、工单、预约、报告与 PDF 服务
+        ├── Agent 轨迹与管理端审计
+        └── 百度地图与短信服务适配
+        │
+        ▼
+MySQL（患者档案、对话、导诊记录、预约、工单、规则、账号、审计）
 ```
 
-## 🚀 快速开始
+AGGO 是本项目的 Agent 技术底座，提供 Agent 编排、对话能力、SSE 流式响应、记忆与工具调用等基础能力；导诊系统在其上实现了面向医疗分诊场景的多 Agent 协作和三端业务流程。
 
-### 1. 基础 AI 代理示例
+## 文档导航
 
-创建一个简单的对话代理：
+| 文档 | 内容 |
+| --- | --- |
+| [`example/README.md`](./example/README.md) | 完整配置、启动、三端使用、测试、权限与验收说明 |
+| [`docs/PRD_SMART_TRIAGE.md`](./docs/PRD_SMART_TRIAGE.md) | 产品需求、用户角色、业务目标与边界 |
+| [`docs/SMART_TRIAGE_PLAN.md`](./docs/SMART_TRIAGE_PLAN.md) | 产品与技术方案、业务流程与阶段规划 |
+| [`docs/MULTI_AGENT_ARCHITECTURE.md`](./docs/MULTI_AGENT_ARCHITECTURE.md) | 多 Agent 职责划分、编排与数据流设计 |
+| [`docs/DATABASE_DESIGN.md`](./docs/DATABASE_DESIGN.md) | 数据库设计原则、实体关系与核心字段 |
+| [`docs/TECHNICAL_SPECIFICATION.md`](./docs/TECHNICAL_SPECIFICATION.md) | 正式技术说明：系统架构、数据库、多 Agent、RAG、SSE、安全与可靠性 |
+| [`memory/README.md`](./memory/README.md) | AGGO 记忆模块说明 |
+| [`database/README.md`](./database/README.md) | AGGO 向量数据库模块说明 |
 
-```go
-package main
+## 快速启动
 
-import (
-    "context"
-    "log"
-    "strings"
+### 环境要求
 
-    "github.com/CoolBanHub/aggo/agent"
-    "github.com/CoolBanHub/aggo/model"
-    "github.com/CoolBanHub/aggo/memory"
-    "github.com/CoolBanHub/aggo/memory/builtin"
-    "github.com/CoolBanHub/aggo/memory/builtin/storage"
-    "github.com/cloudwego/eino/adk"
-    "github.com/cloudwego/eino/schema"
-)
+- Go `1.25.x` 或兼容版本。
+- MySQL `8.x`。
+- OpenAI 兼容模型服务。
+- 百度地图 JavaScript API GL AK（地图能力需要）。
 
-func main() {
-    ctx := context.Background()
+### 配置环境变量
 
-    // 创建聊天模型
-    cm, _ := model.NewChatModel(
-        model.WithBaseUrl("https://api.openai.com/v1"),
-        model.WithAPIKey("your-api-key"),
-        model.WithModel("gpt-4"),
-    )
+在 `example` 目录复制模板到父目录：
 
-    // 创建记忆 provider
-    provider, _ := memory.GlobalRegistry().CreateProvider("builtin", &builtin.ProviderConfig{
-        ChatModel: cm,
-        Storage:   storage.NewMemoryStore(),
-        MemoryConfig: &builtin.MemoryConfig{
-            EnableUserMemories:   true,
-            EnableSessionSummary: true,
-            MemoryLimit:          10,
-            Retrieval:            builtin.RetrievalLastN,
-        },
-    })
-    defer provider.Close()
-
-    ag, _ := agent.NewAgentBuilder(cm).
-        WithInstruction("你是一个友好的 AI 助手").
-        WithMemory(provider).
-        Build(ctx)
-
-    runner := adk.NewTypedRunner(adk.TypedRunnerConfig[*schema.AgenticMessage]{Agent: ag})
-    iter := runner.Run(ctx, []*schema.AgenticMessage{
-        schema.UserAgenticMessage("你好，介绍一下你自己"),
-    }, adk.WithSessionValues(map[string]any{
-        "userID":    "demo-user",
-        "sessionID": "demo-session",
-    }))
-
-    for {
-        event, ok := iter.Next()
-        if !ok {
-            break
-        }
-        if event.Err != nil {
-            log.Fatal(event.Err)
-        }
-        if event.Output != nil && event.Output.MessageOutput != nil {
-            if msg, err := event.Output.MessageOutput.GetMessage(); err == nil && msg != nil {
-                log.Printf("AI: %s", assistantText(msg))
-            }
-        }
-    }
-}
-
-func assistantText(msg *schema.AgenticMessage) string {
-    var b strings.Builder
-    for _, block := range msg.ContentBlocks {
-        if block != nil && block.AssistantGenText != nil {
-            b.WriteString(block.AssistantGenText.Text)
-        }
-    }
-    return b.String()
-}
+```powershell
+Copy-Item .\example\.env.example .\.env
 ```
 
-启用记忆时，需要在运行时通过 `adk.WithSessionValues(...)` 传入 `userID` 和 `sessionID`，否则 `MemoryMiddleware` 不会执行检索和写入。
+至少配置：
 
-### 2. 运行示例程序
-
-```bash
-cd example
-
-# 知识库代理示例
-go run ./knowledge_agent_tool_test
-
-# 记忆系统示例
-go run ./mem_agent_test
-
-# mem0 记忆示例
-go run ./mem0_agent_test
-
-# SSE 流式响应示例
-go run ./sse
-
-# ADK 使用示例
-go run ./adk_test
+```text
+BaseUrl
+APIKey
+MYSQL_DSN
+DOCTOR_USERNAME
+DOCTOR_PASSWORD
+ADMIN_USERNAME
+ADMIN_PASSWORD
+BAIDU_MAP_AK
 ```
 
-示例是独立 Go 模块，更多运行方式见 [example/README.md](./example/README.md)。
+`BaseUrl`、`APIKey` 和 `MYSQL_DSN` 在所有运行环境中均为必填项，服务不内置默认数据库密码。设置 `APP_ENV=production` 后会启用严格启动校验：医生端和管理端必须使用自定义账号密码，密码至少 12 位且不能使用演示密码；同时必须配置百度地图 AK，以及互亿无线账号密码或自定义短信服务地址。开发环境可保留本地调试账号和短信 `debugCode`，但不得用于正式部署。
 
-运行前请先配置 `BaseUrl`、`APIKey`、`Model` 等模型环境变量；部分示例还依赖额外服务：
-`knowledge_agent_tool_test` 需要 Milvus 或 PostgreSQL/pgvector，
-`mem_agent_test` 和 `sse` 当前示例使用本地 MySQL，
-`mem0_agent_test` 需要 mem0 兼容服务。
+创建数据库后启动。应用会通过 GORM 自动创建或更新所需表：
 
-## 💡 核心功能详解
-
-### 代理配置选项
-
-AGGO 提供了灵活的代理配置选项：
-
-```go
-ag, err := agent.NewAgentBuilder(chatModel).
-    WithInstruction("你是一个AI助手").
-    WithMemory(provider).
-    WithTools(tools...).
-    WithMaxStep(10).
-    Build(ctx)
-```
-
-### 记忆管理配置
-
-```go
-provider, err := memory.GlobalRegistry().CreateProvider("builtin", &builtin.ProviderConfig{
-    ChatModel: chatModel,
-    Storage:   storage.NewMemoryStore(),
-    MemoryConfig: &builtin.MemoryConfig{
-        EnableSessionSummary: true,               // 启用会话摘要
-        EnableUserMemories:   true,               // 启用用户长期记忆
-        MemoryLimit:          10,                 // 历史消息条数限制
-        Retrieval:            builtin.RetrievalLastN, // 检索策略
-    },
-})
-if err != nil {
-    panic(err)
-}
-```
-
-**历史消息注入**:
-- 当前 `builtin` provider 会按最近 N 条会话消息补充上下文
-- 启用会话摘要后，会优先注入摘要，再补充摘要游标之后的尾部消息
-- 需要检索更早的用户长期事件时，可启用事件检索模式并使用自动注入的 `search_user_memory` 工具
-
-完整使用说明、provider 约定和存储差异见 [memory/README.md](./memory/README.md)。
-
-如果你希望把记忆托管给外部服务，也可以直接切到 `mem0` 提供器：
-
-```go
-import (
-    "github.com/CoolBanHub/aggo/memory"
-    "github.com/CoolBanHub/aggo/memory/mem0"
-)
-
-provider, err := memory.GlobalRegistry().CreateProvider("mem0", &mem0.ProviderConfig{
-    BaseURL:           "https://api.mem0.ai",
-    APIKey:            "your-mem0-api-key",
-    Mode:              mem0.ModeHosted,
-    SearchMsgLimit:    6,
-    SearchResultLimit: 5,
-    OutputMemoryLimit: 5,
-})
-if err != nil {
-    panic(err)
-}
-```
-
-### 定时任务系统
-
-#### 创建定时任务代理
-
-```go
-import (
-    cronPkg "github.com/CoolBanHub/aggo/cron"
-    cronTool "github.com/CoolBanHub/aggo/tools/cron"
-)
-
-store := cronPkg.NewFileStore("/path/to/cron_jobs.json")
-service := cronPkg.NewCronService(store, nil)
-cronTools := cronTool.GetTools(service)
-
-result, _ := cronPkg.NewCronAgent(ctx, chatModel, cronTools,
-    cronPkg.WithMaxJobsPerUser(20),
-)
-
-_ = result.Service.Start()
-defer result.Service.Stop()
-```
-
-#### 调度方式
-
-| 类型 | 说明 | 示例 |
-|------|------|------|
-| `at` | 一次性定时 | 10分钟后执行一次 |
-| `every` | 周期性定时 | 每2小时执行一次 |
-| `cron` | Cron表达式 | 每天9点执行 |
-
-#### 自定义任务触发
-
-```go
-result, _ := cronPkg.NewCronAgent(ctx, chatModel, cronTools,
-    cronPkg.WithOnJobTriggered(func(job *cronPkg.CronJob) {
-        fmt.Printf("任务触发: %s\n", job.Payload.Message)
-    }),
-)
-```
-
-### 向量数据库集成
-
-#### Milvus 配置
-
-```go
-import (
-    "github.com/CoolBanHub/aggo/database/milvus"
-    "github.com/milvus-io/milvus/client/v2/milvusclient"
-)
-
-// 创建 Milvus 客户端
-client, _ := milvusclient.New(ctx, &milvusclient.ClientConfig{
-    Address: "127.0.0.1:19530",
-    DBName:  "",  // 使用默认数据库
-})
-
-// 创建向量数据库实例（内部使用 eino-ext milvus2 组件）
-vectorDB, _ := milvus.NewMilvus(ctx, milvus.MilvusConfig{
-    Client:         client,
-    CollectionName: "knowledge_vectors",
-    EmbeddingDim:   1024,
-    Embedding:      embeddingModel,
-})
-```
-
-#### PostgreSQL + pgvector 配置
-
-```go
-import "github.com/CoolBanHub/aggo/database/postgres"
-
-vectorDB, _ := postgres.NewPostgres(postgres.PostgresConfig{
-    Client:          gormDB,  // GORM 数据库实例
-    CollectionName:  "knowledge_vectors",
-    VectorDimension: 1024,
-    Embedding:       embeddingModel,
-})
-```
-
-### 模型配置
-
-#### 聊天模型
-
-```go
-import "github.com/CoolBanHub/aggo/model"
-
-chatModel, _ := model.NewChatModel(
-    model.WithBaseUrl("https://api.openai.com/v1"),
-    model.WithAPIKey("your-api-key"),
-    model.WithModel("gpt-4"),
-    model.WithReasoningEffortLevel("medium"),  // 推理强度: low, medium, high
-)
-```
-
-#### 嵌入模型
-
-```go
-embeddingModel, _ := model.NewEmbModel(
-    model.WithBaseUrl("https://api.openai.com/v1"),
-    model.WithAPIKey("your-api-key"),
-    model.WithModel("text-embedding-3-large"),
-    model.WithDimensions(1024),
-)
-```
-
-### 工具集成
-
-#### 知识库工具
-
-```go
-import "github.com/CoolBanHub/aggo/tools"
-
-knowledgeTools := tools.GetKnowledgeTools(vectorDB, retriever, &retriever.Options{
-    TopK:           utils.ValueToPtr(10),
-    ScoreThreshold: utils.ValueToPtr(0.1),
-})
-```
-
-**功能**:
-- 文档加载 (支持文件和 URL)
-- 语义搜索
-- 向量检索
-
-#### 数据库工具
-
-```go
-import (
-    "github.com/CoolBanHub/aggo/tools"
-    "github.com/CoolBanHub/aggo/tools/database"
-)
-
-// 默认只允许 SELECT/SHOW/DESCRIBE/EXPLAIN/PRAGMA/WITH 等只读查询
-dbTools := tools.GetDatabaseTools(gormDB)
-
-// 如确需写操作，必须显式开启
-writeTools := tools.GetDatabaseTools(gormDB, database.WithAllowWrite(true))
-```
-
-#### Shell 工具
-
-```go
-import (
-    "github.com/CoolBanHub/aggo/tools"
-    "github.com/CoolBanHub/aggo/tools/shell"
-)
-
-// 默认限制工作目录并拒绝高危命令
-shellTools := tools.GetShellTools()
-
-// 生产环境建议进一步配置命令白名单
-restrictedShellTools := tools.GetShellTools(shell.WithAllowedCommands("ls", "pwd", "cat"))
-```
-
-### SSE 流式响应
-
-```go
-import (
-    "net/http"
-
-    "github.com/CoolBanHub/aggo/pkg/adapter"
-    "github.com/CoolBanHub/aggo/pkg/sse"
-    "github.com/cloudwego/eino/schema"
-)
-
-// 创建 SSE 写入器
-writer := sse.NewWriter("session-id", w)
-if writer == nil {
-    http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-    return
-}
-defer writer.Close()
-
-// 将模型流式输出写为 SSE；Writer.Stream 会在正常结束时写出 [DONE]
-stream, err := chatModel.Stream(ctx, []*schema.AgenticMessage{
-    schema.UserAgenticMessage("你好"),
-})
-if err != nil {
-    http.Error(w, err.Error(), http.StatusInternalServerError)
-    return
-}
-
-_ = writer.Stream(ctx, stream, func(output *schema.AgenticMessage, index int) any {
-    return adapter.MessageToOpenaiStreamResponse(output, index)
-})
-```
-
-## 🔧 环境变量配置
-
-创建 `.env` 文件配置必要的环境变量：
-
-```bash
-# OpenAI API 配置
-OPENAI_API_KEY=your-api-key
-OPENAI_BASE_URL=https://api.openai.com/v1
-
-# Milvus 配置
-MILVUS_ADDRESS=127.0.0.1:19530
-
-# Langfuse 配置 (可选)
-LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_HOST=https://cloud.langfuse.com
-```
-
-## 🛠️ 开发指南
-
-### 项目结构
-
-```
-aggo/
-├── agent/                      # AI 代理系统
-│   ├── builder.go                 # AgentBuilder
-│   ├── instruction_formatter.go    # 指令格式整理
-│   └── instruction_formatter_test.go
-│
-├── memory/                     # 记忆管理系统
-│   ├── provider.go                # MemoryProvider 接口
-│   ├── middleware.go              # Agent 记忆中间件
-│   ├── registry.go                # provider 注册与创建
-│   ├── compat.go                  # builtin 兼容导出
-│   ├── builtin_adapter.go         # builtin -> provider 适配层
-│   ├── README.md                  # memory 模块说明
-│   ├── builtin/                   # 内置记忆实现
-│   │   ├── manager.go                # 记忆管理器
-│   │   ├── provider.go               # builtin provider 配置
-│   │   ├── analyzer.go               # 用户记忆分析
-│   │   ├── summary.go                # 会话摘要生成
-│   │   ├── trigger.go                # 摘要触发策略
-│   │   ├── storage.go                # builtin 存储接口
-│   │   ├── types.go                  # builtin 配置与数据结构
-│   │   └── storage/                  # 内存 / 文件 / GORM 存储实现
-│   ├── memu/                      # 外部 memu 服务 provider
-│   └── mem0/                      # mem0 / 兼容 API provider
-│
-├── cron/                       # 定时任务系统
-│   ├── agent.go                   # CronAgent 构建入口
-│   ├── model.go                   # 任务模型定义
-│   ├── service.go                 # 调度服务
-│   ├── store.go                   # 存储接口
-│   ├── store_file.go              # 文件存储实现
-│   └── store_gorm.go              # GORM 存储实现
-│
-├── database/                   # 向量数据库（知识库存储层）
-│   ├── database.go                # Database 接口（indexer + retriever）
-│   ├── README.md                  # 知识库模块说明
-│   ├── milvus/                    # Milvus 实现（基于 eino-ext milvus2）
-│   │   └── milvus.go                 # Milvus 封装
-│   └── postgres/                  # PostgreSQL + pgvector 实现
-│       ├── postgres.go               # PostgreSQL 客户端
-│       ├── option.go                 # 配置选项
-│       ├── utils.go                  # 工具函数
-│       └── postgres_test.go
-│
-├── model/                      # AI 模型封装
-│   ├── chat.go                    # 聊天模型 (支持推理强度参数)
-│   ├── embedding.go               # 嵌入模型
-│   ├── option.go                  # 模型配置选项
-│   └── glm/                       # GLM 模型支持
-│       ├── chatmodel.go              # GLM 聊天模型
-│       ├── option.go                 # 配置选项
-│       └── types.go                  # 类型定义
-│
-├── tools/                      # 工具集
-│   ├── tools.go                   # 工具函数
-│   ├── knowledge/                 # 知识库工具
-│   │   ├── knowledge.go             # 知识库操作
-│   │   └── reasoning.go             # 知识推理
-│   ├── database/                  # 数据库工具
-│   │   └── database.go              # MySQL/PostgreSQL 操作
-│   ├── shell/                     # Shell 工具
-│   │   ├── shell.go                 # Shell 执行
-│   │   ├── shell_process_unix.go    # Unix 进程管理
-│   │   └── shell_process_windows.go # Windows 进程管理
-│   ├── cron/                      # 定时任务工具
-│   │   └── cron.go                  # Cron 操作工具
-│   └── memory/                    # 记忆检索工具
-│       └── memory.go                # 用户记忆搜索工具
-│
-├── pkg/                        # 公共集成包（稳定 import path）
-│   ├── README.md                  # pkg 公共 API 约定
-│   ├── adapter/                   # Eino -> OpenAI 响应适配
-│   ├── ailens360/                 # AILens360 代理与追踪集成
-│   ├── sse/                       # Server-Sent Events
-│   │   ├── sse.go                    # SSE 核心实现
-│   │   ├── event.go                  # 事件定义
-│   │   └── writer.go                 # SSE 写入器
-│   └── langfuse/                  # Langfuse 可观测性
-│       ├── client.go                 # Langfuse 数据上报客户端
-│       ├── handler.go                # Eino 回调处理器
-│       └── prompt.go                 # Prompt 接口
-│
-├── utils/                      # 工具函数
-│   ├── ulid.go                    # ULID 生成
-│   ├── float.go                   # 浮点数处理
-│   └── convert.go                 # 类型转换
-│
-└── example/                    # 独立示例 Go 模块
-    ├── README.md                  # 示例运行说明
-    ├── go.mod                     # 示例模块定义
-    ├── knowledge_agent_tool_test/ # 知识库代理示例
-    ├── mem_agent_test/            # 记忆系统示例
-    ├── sse/                       # SSE 流式响应示例
-    ├── adk_test/                  # ADK 使用示例
-    ├── callback_test/             # 回调示例
-    ├── tool_test/                 # 工具测试示例
-    ├── cron_test/                 # 定时任务示例
-    ├── vision_test/               # 视觉能力示例
-    ├── generate_img_test/         # 图像生成示例
-    ├── skill_agent_test/          # 技能代理示例
-    └── claw/                      # 独立 Claw 示例模块
-```
-
-### 构建和测试
-
-```bash
-# 构建项目
-go build ./...
-
-# 运行测试
-go test ./...
-
-# 运行特定包测试
-go test -v ./agent/...
-go test -v ./memory/...
-go test -v ./database/...
-
-# 验证示例模块
-cd example
-go test ./...
-go run ./mem_agent_test
-go run ./sse
-
-# 验证独立 Claw 示例模块
-cd claw
-go test ./...
-```
-
-## 🐛 故障排除
-
-### 向量维度不匹配
-
-**问题**: 向量维度不匹配导致插入失败
-
-**解决方案**:
-- 确保嵌入模型配置的 `Dimensions` 与向量数据库的 `EmbeddingDim` 一致
-- 推荐统一使用 1024 维度 (`text-embedding-3-large` 模型)
-
-### Milvus 连接失败
-
-**问题**: 无法连接到 Milvus 服务
-
-**解决方案**:
-- 检查 Milvus 服务是否正常运行: `docker ps`
-- 使用 `DBName: ""` 连接默认数据库
-- 确认端口 19530 未被占用
-
-### PostgreSQL pgvector 扩展未安装
-
-**问题**: `extension "vector" does not exist`
-
-**解决方案**:
 ```sql
--- 安装 pgvector 扩展
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- 验证安装
-\dx vector
+CREATE DATABASE aggo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-### 记忆 provider 未正常关闭
+### 启动服务
 
-**问题**: 程序退出时资源未释放
-
-**解决方案**:
-```go
-defer provider.Close()  // 确保在创建 provider 后立即添加 defer
+```powershell
+cd .\example
+.\start.cmd
 ```
 
-## 🤝 贡献
+指定端口：
 
-我们欢迎各种形式的贡献！
+```powershell
+.\start.cmd -Port 8090
+```
 
-### 如何贡献
+更多环境行为、短信调试方式与部署注意事项见 [`example/README.md`](./example/README.md)。
 
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
+### Docker Compose
 
-### 贡献指南
+仓库根目录提供 `Dockerfile`、`docker-compose.yml` 和 `.dockerignore`。准备好私有 `.env` 后可一键启动应用与 MySQL：
 
-- 代码需遵循 Go 语言规范
-- 添加必要的单元测试
-- 更新相关文档
-- 保持提交信息清晰明了
+```powershell
+docker compose up -d --build
+docker compose ps
+Invoke-RestMethod http://localhost:8081/ready
+```
 
-## 📄 许可证
+Docker 默认映射到宿主机 `8081`，与本地 `8080` 服务并行运行，可通过 `DOCKER_PORT` 覆盖。应用容器使用非 root 用户运行，内置中文 PDF 字体和 `/ready` 健康检查；MySQL 使用命名卷持久化。生产环境必须覆盖 Compose 的本地数据库默认密码，并设置 `APP_ENV=production`。
+
+## 质量与安全基线
+
+- `.env`、模型密钥、数据库 DSN、登录密码、短信密钥和地图 AK 均由忽略规则排除，不进入版本控制。
+- 服务启动时集中校验必要配置；生产模式拒绝空配置、弱演示密码和缺失的短信服务。
+- 未登录访问患者、医生和管理端受保护 API 时返回 `401`。
+- 患者仅能访问自己的档案、对话、报告、工单和预约。
+- 医生停用或密码重置后，已有医生会话立即失效。
+- 导诊、预约和人工复核采用受限状态流转，保留审计记录。
+- 本地验收覆盖三端登录、退出失效、数据关联、管理端接口读取、测试、静态检查和构建。
+- GitHub Actions 在推送或提交 Pull Request 时自动执行单元测试、`go vet`、Go 构建和 Docker 镜像构建验证。
+
+### 基础持续集成
+
+流水线定义位于 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)，只负责代码质量验证，不包含自动部署，也不会读取项目 `.env` 或任何线上密钥。CI 包含两个容易说明的任务：
+
+1. **Go 质量检查**：运行 `go test`、`go vet`，并确认服务能够编译。
+2. **Docker 构建检查**：根据仓库 `Dockerfile` 构建镜像，但不推送到镜像仓库。
+
+面试时可概括为：每次提交代码后自动检查测试、静态问题和构建结果，减少无法运行的代码进入主分支。
+
+运行验证：
+
+```powershell
+cd .\example
+go test .\sse -count=1
+go vet .\sse
+go build -o .\aggo-sse-new.exe .\sse
+```
+
+可一键生成覆盖率并执行三端只读验收：
+
+```powershell
+cd .\example
+.\test.ps1 -Coverage -Acceptance -RequireDemoData
+```
+
+RAG 检索与 Agent 调度回归评测：
+
+```powershell
+go test .\sse -run "Test(RAGRetrievalEvaluationDataset|AgentDispatchEvaluationDataset)$" -count=1 -v
+```
+
+执行本地只读 API 性能基线：
+
+```powershell
+go run .\cmd\perfcheck -requests 50 -concurrency 10 -max-p95-ms 4000 -json performance-report.json
+```
+
+详细指标见 [性能基线](./docs/PERFORMANCE_BASELINE.md)。
+
+## 项目结构
+
+```text
+aggo/
+|-- example/                   # 智能导诊应用代码与三端页面
+|   |-- sse/                   # HTTP 服务、业务模块、Agent 与测试
+|   |-- README.md              # 应用使用和交付说明
+|   `-- .env.example           # 环境变量模板
+|-- docs/                      # PRD、技术方案、多 Agent 架构、数据库设计
+|-- agent/                     # AGGO Agent 框架能力
+|-- memory/                    # 记忆模块
+|-- database/                  # 向量数据库模块
+|-- model/                     # 模型接入
+|-- tools/                     # 工具调用能力
+`-- README.md                  # 项目总览（当前文档）
+```
+
+## 技术底座：AGGO 框架
+
+本仓库同时保留 AGGO 框架能力，供智能导诊平台调用和扩展：
+
+- 基于 CloudWeGo Eino 的 ReAct Agent、工具调用、多轮对话和 SSE 流式响应。
+- 会话记忆、长期记忆、摘要和多种存储后端。
+- 知识库、数据库、Shell、定时任务等工具生态。
+- OpenAI 兼容模型、GLM、Langfuse 与 AILens360 等扩展能力。
+
+框架相关模块可按需查看 [`agent/`](./agent)、[`memory/`](./memory)、[`database/`](./database)、[`tools/`](./tools) 和 [`pkg/`](./pkg)。
+
+## 开源许可
 
 本项目采用 [MIT 许可证](LICENSE) 开源。
 
-## 🙏 致谢
+## 登录会话持久化
 
-- [CloudWeGo Eino](https://github.com/cloudwego/eino) - 强大的 AI Agent 开发框架
-- [Milvus](https://milvus.io/) - 高性能向量数据库
-- [Langfuse](https://langfuse.com/) - AI 应用可观测性平台
-- [gocron](https://github.com/go-co-op/gocron) - 定时任务调度库
+三端登录会话已由单纯内存缓存改为“内存缓存 + 数据库恢复”。会话元数据写入 `persistent_session`，Token 仅以 SHA-256 摘要形式存储。应用重启后，现有 Cookie 可继续恢复患者、医生和管理员身份。
 
-## 📧 联系方式
+## 随访报表与导出
 
-- 问题反馈: [GitHub Issues](https://github.com/CoolBanHub/aggo/issues)
-- 讨论交流: [GitHub Discussions](https://github.com/CoolBanHub/aggo/discussions)
-
----
-
-<div align="center">
-
-**AGGO** - 构建智能 AI Agent 的 Go 语言框架
-
-[开始使用](#-快速开始) · [查看示例](./example) · [贡献代码](#-贡献)
-
-由 AGGO Team 构建
-
-</div>
+随访管理页支持多条件联合筛选和 CSV 导出。导出由服务端重新应用筛选条件，避免只导出前端当前显示数据。患者手机号按 `195****5183` 格式脱敏，并对 CSV 公式注入进行防护。

@@ -50,16 +50,23 @@ func secureEqual(left, right string) bool {
 	return subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
 }
 
-func newDoctorSession(username string) (string, error) {
+func newDoctorSessionForUser(username, displayName string) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
 	}
 	token := hex.EncodeToString(raw)
+	expiresAt := time.Now().Add(12 * time.Hour)
+	session := doctorSession{Username: username, DisplayName: displayName, ExpiresAt: expiresAt}
 	doctorSessionsMu.Lock()
-	doctorSessions[token] = doctorSession{Username: username, DisplayName: doctorDisplayName(), ExpiresAt: time.Now().Add(12 * time.Hour)}
+	doctorSessions[token] = session
 	doctorSessionsMu.Unlock()
+	savePersistentSession(token, persistentSessionDoctor, username, displayName, expiresAt)
 	return token, nil
+}
+
+func newDoctorSession(username string) (string, error) {
+	return newDoctorSessionForUser(username, doctorDisplayName())
 }
 
 func currentDoctorSession(r *http.Request) (doctorSession, bool) {
@@ -68,12 +75,23 @@ func currentDoctorSession(r *http.Request) (doctorSession, bool) {
 		return doctorSession{}, false
 	}
 	doctorSessionsMu.Lock()
-	defer doctorSessionsMu.Unlock()
 	session, ok := doctorSessions[cookie.Value]
-	if !ok || time.Now().After(session.ExpiresAt) {
+	if ok && time.Now().After(session.ExpiresAt) {
 		delete(doctorSessions, cookie.Value)
+		ok = false
+	}
+	doctorSessionsMu.Unlock()
+	if ok {
+		return session, true
+	}
+	record, restored := loadPersistentSession(cookie.Value, persistentSessionDoctor)
+	if !restored {
 		return doctorSession{}, false
 	}
+	session = doctorSession{Username: record.Subject, DisplayName: record.DisplayName, ExpiresAt: record.ExpiresAt}
+	doctorSessionsMu.Lock()
+	doctorSessions[cookie.Value] = session
+	doctorSessionsMu.Unlock()
 	return session, true
 }
 
@@ -83,6 +101,18 @@ func currentDoctor(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return session.Username, true
+}
+
+func revokeDoctorSessions(username string) {
+	username = strings.TrimSpace(username)
+	doctorSessionsMu.Lock()
+	for token, session := range doctorSessions {
+		if session.Username == username {
+			delete(doctorSessions, token)
+		}
+	}
+	doctorSessionsMu.Unlock()
+	deletePersistentSessionsForSubject(persistentSessionDoctor, username)
 }
 
 func requireDoctorAPI(w http.ResponseWriter, r *http.Request) (doctorSession, bool) {
@@ -119,26 +149,43 @@ func doctorLoginHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	expectedUsername, expectedPassword := doctorCredentials()
-	if !secureEqual(strings.TrimSpace(req.Username), expectedUsername) || !secureEqual(req.Password, expectedPassword) {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
-		return
+	username := strings.TrimSpace(req.Username)
+	displayName := doctorDisplayName()
+	if globalDB != nil {
+		user, err := authenticateStaff(username, req.Password, staffRoleDoctor)
+		if err != nil {
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			return
+		}
+		username = user.Username
+		displayName = user.DisplayName
+	} else {
+		expectedUsername, expectedPassword := doctorCredentials()
+		if !secureEqual(username, expectedUsername) || !secureEqual(req.Password, expectedPassword) {
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			return
+		}
 	}
-	token, err := newDoctorSession(expectedUsername)
+	token, err := newDoctorSessionForUser(username, displayName)
 	if err != nil {
 		http.Error(w, "session creation failed", http.StatusInternalServerError)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: doctorSessionCookie, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 12 * 60 * 60})
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"username": expectedUsername})
+	_ = json.NewEncoder(w).Encode(map[string]string{"username": username, "displayName": displayName})
 }
 
 func doctorLogoutHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if cookie, err := r.Cookie(doctorSessionCookie); err == nil {
 		doctorSessionsMu.Lock()
 		delete(doctorSessions, cookie.Value)
 		doctorSessionsMu.Unlock()
+		deletePersistentSession(cookie.Value, persistentSessionDoctor)
 	}
 	http.SetCookie(w, &http.Cookie{Name: doctorSessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	w.Header().Set("Content-Type", "application/json")

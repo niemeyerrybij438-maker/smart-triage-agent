@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.codex
+.vscode
+.idea
+**/*.log
+**/*.exe
+**/*.exe~
+**/*.test
+**/coverage.out
+**/performance-report*.json
+**/node_modules

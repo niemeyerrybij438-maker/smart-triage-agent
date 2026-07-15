@@ -39,7 +39,7 @@ func isLatestTriageExtraction(sessionID string, version uint64) bool {
 	return triageExtractionVersions[sessionID] == version
 }
 
-func extractAndSaveTriageRecord(sessionID, userMessage, assistantReply string, version uint64) {
+func extractAndSaveTriageRecord(sessionID, patientPhone, userMessage, assistantReply, ragEvidence string, version uint64) {
 	if globalTriageExtractorRunner == nil || globalDB == nil {
 		return
 	}
@@ -99,6 +99,9 @@ func extractAndSaveTriageRecord(sessionID, userMessage, assistantReply string, v
 		return
 	}
 	extracted.SessionID = sessionID
+	extracted.PatientPhone = patientPhone
+	extracted.PatientProfile = patientProfileSnapshotJSON(patientPhone)
+	extracted.RAGEvidence = strings.TrimSpace(ragEvidence)
 	if strings.TrimSpace(extracted.Symptom) == "" || strings.TrimSpace(extracted.Department) == "" {
 		return
 	}
@@ -110,5 +113,6 @@ func extractAndSaveTriageRecord(sessionID, userMessage, assistantReply string, v
 	}
 	if err := upsertTriageRecord(extracted); err != nil {
 		log.Printf("save extracted triage record failed: %v", err)
+		return
 	}
 }

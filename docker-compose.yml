@@ -1,0 +1,42 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: aggo
+      MYSQL_USER: ${MYSQL_USER:-aggo}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-aggo_local_password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_local_password}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - aggo_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      PORT: 8080
+      MYSQL_DSN: ${MYSQL_USER:-aggo}:${MYSQL_PASSWORD:-aggo_local_password}@tcp(mysql:3306)/aggo?charset=utf8mb4&parseTime=True&loc=Local
+      PDF_FONT_PATH: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "${DOCKER_PORT:-8081}:8080"
+
+volumes:
+  aggo_mysql_data:

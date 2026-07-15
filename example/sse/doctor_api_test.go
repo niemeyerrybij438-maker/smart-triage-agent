@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func resetDoctorSessions(t *testing.T) {
@@ -30,7 +31,10 @@ func loginDoctorForTest(t *testing.T, displayName string) *http.Cookie {
 	body := bytes.NewBufferString(`{"username":"doctor","password":"doctor123"}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/doctor/login", body)
 	response := httptest.NewRecorder()
+	previousDB := globalDB
+	globalDB = nil
 	doctorLoginHandler(response, request)
+	globalDB = previousDB
 	if response.Code != http.StatusOK {
 		t.Fatalf("login status = %d, body = %q", response.Code, response.Body.String())
 	}
@@ -95,5 +99,22 @@ func TestDoctorLoginMeAndLogoutLifecycle(t *testing.T) {
 	doctorMeHandler(meAfterLogoutResponse, meAfterLogout)
 	if meAfterLogoutResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("me after logout status = %d, want %d", meAfterLogoutResponse.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRevokeDoctorSessionsRemovesMatchingUserOnly(t *testing.T) {
+	resetDoctorSessions(t)
+	doctorSessionsMu.Lock()
+	doctorSessions["one"] = doctorSession{Username: "doctor1", ExpiresAt: time.Now().Add(time.Hour)}
+	doctorSessions["two"] = doctorSession{Username: "doctor2", ExpiresAt: time.Now().Add(time.Hour)}
+	doctorSessionsMu.Unlock()
+	revokeDoctorSessions("doctor1")
+	doctorSessionsMu.Lock()
+	defer doctorSessionsMu.Unlock()
+	if _, ok := doctorSessions["one"]; ok {
+		t.Fatal("doctor1 session was not revoked")
+	}
+	if _, ok := doctorSessions["two"]; !ok {
+		t.Fatal("unrelated doctor session was revoked")
 	}
 }

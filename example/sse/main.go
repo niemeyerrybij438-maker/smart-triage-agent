@@ -60,16 +60,56 @@ func main() {
 		log.Fatalf("Failed to initialize bot: %v", err)
 	}
 	defer globalMemoryProvider.Close()
+	startFollowUpNotificationLoop()
+	startPersistentSessionCleanupLoop()
 
+	http.HandleFunc("/health", healthHandler)
+	http.HandleFunc("/ready", readinessHandler)
 	http.HandleFunc("/", indexHandler)
+	http.HandleFunc("/patient/login", patientLoginPageHandler)
 	http.HandleFunc("/doctor", doctorHandler)
+	http.HandleFunc("/admin", adminHandler)
+	http.HandleFunc("/admin/login", adminLoginPageHandler)
 	http.HandleFunc("/doctor/login", doctorLoginPageHandler)
 	http.HandleFunc("/api/doctor/login", doctorLoginHandler)
 	http.HandleFunc("/api/doctor/logout", doctorLogoutHandler)
 	http.HandleFunc("/api/doctor/me", doctorMeHandler)
+	http.HandleFunc("/api/admin/login", adminLoginHandler)
+	http.HandleFunc("/api/admin/logout", adminLogoutHandler)
+	http.HandleFunc("/api/admin/me", adminMeHandler)
+	http.HandleFunc("/api/admin/dashboard", adminDashboardHandler)
+	http.HandleFunc("/api/admin/follow-ups", adminFollowUpDetailsHandler)
+	http.HandleFunc("/api/admin/follow-ups/export", adminFollowUpExportHandler)
+	http.HandleFunc("/api/admin/doctors", adminDoctorsHandler)
+	http.HandleFunc("/api/admin/doctors/update", adminDoctorUpdateHandler)
+	http.HandleFunc("/api/admin/doctors/reset-password", adminDoctorResetPasswordHandler)
+	http.HandleFunc("/api/admin/audit", adminAuditHandler)
+	http.HandleFunc("/api/admin/records", adminRecordsHandler)
+	http.HandleFunc("/api/admin/password", adminPasswordHandler)
+	http.HandleFunc("/api/admin/platform-config", adminPlatformConfigHandler)
+	http.HandleFunc("/api/admin/risk-rules", adminRiskRulesHandler)
+	http.HandleFunc("/api/admin/risk-rules/update", adminRiskRuleUpdateHandler)
+	http.HandleFunc("/api/admin/agent-analysis", adminAgentAnalysisHandler)
+	http.HandleFunc("/api/admin/agent-traces", adminAgentTracesHandler)
+	http.HandleFunc("/api/admin/medical-knowledge", adminMedicalKnowledgeHandler)
 	http.HandleFunc("/api/chat", chatHandler)
 	http.HandleFunc("/api/triage-records", triageRecordsHandler)
 	http.HandleFunc("/api/triage-records/status", triageRecordStatusHandler)
+	http.HandleFunc("/api/escalation-tickets", escalationTicketsHandler)
+	http.HandleFunc("/api/follow-ups", followUpsHandler)
+	http.HandleFunc("/api/follow-ups/feedback", followUpFeedbackHandler)
+	http.HandleFunc("/api/follow-up-notifications", followUpNotificationsHandler)
+	http.HandleFunc("/api/patient/sms", patientSMSHandler)
+	http.HandleFunc("/api/patient/login", patientLoginHandler)
+	http.HandleFunc("/api/patient/me", patientMeHandler)
+	http.HandleFunc("/api/patient/profile", patientProfileHandler)
+	http.HandleFunc("/api/patient/chats", patientChatsHandler)
+	http.HandleFunc("/api/patient/logout", patientLogoutHandler)
+	http.HandleFunc("/api/map/config", mapConfigHandler)
+	http.HandleFunc("/api/appointments", appointmentsHandler)
+	http.HandleFunc("/api/appointments/status", appointmentStatusHandler)
+	http.HandleFunc("/api/hospitals/nearby", hospitalLocationsHandler)
+	http.HandleFunc("/api/reports/triage.pdf", triageReportPDFHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -97,6 +137,9 @@ func loadEnvFiles() {
 }
 
 func initializeBot(ctx context.Context) error {
+	if err := validateRuntimeConfiguration(); err != nil {
+		return err
+	}
 	baseUrl := os.Getenv("BaseUrl")
 	apiKey := os.Getenv("APIKey")
 	if baseUrl == "" || apiKey == "" {
@@ -112,22 +155,48 @@ func initializeBot(ctx context.Context) error {
 		return fmt.Errorf("new chat model fail,err:%s", err)
 	}
 
-	dbDSN := os.Getenv("MYSQL_DSN")
-	if dbDSN == "" {
-		dbDSN = "root:123456@tcp(127.0.0.1:3306)/aggo"
-	}
+	dbDSN := strings.TrimSpace(os.Getenv("MYSQL_DSN"))
 	gormSql, err := NewMysqlGrom(dbDSN, logger.Silent)
 	if err != nil {
-		return fmt.Errorf("鍒涘缓鏁版嵁搴撹繛鎺ュけ璐? %v", err)
+		return fmt.Errorf("database connection failed: %v", err)
 	}
 
 	globalDB = gormSql
-	if err := globalDB.AutoMigrate(&TriageRecord{}); err != nil {
-		return fmt.Errorf("triage record table migration failed: %v", err)
+	migrationModels := []any{&TriageRecord{}, &StaffUser{}, &AuditLog{}, &RiskRule{}, &AgentTrace{}, &PatientChat{}, &EscalationTicket{}, &PlatformConfig{}, &MedicalKnowledgeDocument{}, &FollowUpPlan{}, &FollowUpNotification{}, &PersistentSession{}}
+	migrationModels = append(migrationModels, patientServicesModels()...)
+	if err := globalDB.AutoMigrate(migrationModels...); err != nil {
+		return fmt.Errorf("application table migration failed: %v", err)
 	}
+	if err := migrateLegacyFollowUpNotificationReadState(); err != nil {
+		return fmt.Errorf("follow-up notification migration failed: %v", err)
+	}
+	cleanupExpiredPersistentSessions()
+	if err := seedRiskRules(); err != nil {
+		return fmt.Errorf("risk rule initialization failed: %v", err)
+	}
+	if err := seedMedicalKnowledge(); err != nil {
+		return fmt.Errorf("medical knowledge initialization failed: %v", err)
+	}
+	if err := backfillRAGEvidenceSnapshots(); err != nil {
+		log.Printf("RAG evidence backfill skipped: %v", err)
+	}
+
+	if err := seedStaffAccounts(); err != nil {
+		return fmt.Errorf("staff account initialization failed: %v", err)
+	}
+	reconcileEscalationPriorities()
+	refreshEscalationSLAs()
+	refreshFollowUpStatuses()
+	if err := reconcileClosedEscalationFollowUps(); err != nil {
+		log.Printf("closed follow-up escalation reconciliation failed: %v", err)
+	}
+	if err := generateFollowUpNotifications(time.Now()); err != nil {
+		log.Printf("follow-up notification initialization failed: %v", err)
+	}
+	reconcileAppointmentHospitals()
 	displayName := doctorDisplayName()
 	if displayName != "" {
-		_ = globalDB.Model(&TriageRecord{}).Where("handled_by IN ?", []string{"doctor", "???"}).Update("handled_by", displayName).Error
+		_ = globalDB.Model(&TriageRecord{}).Where("handled_by IN ?", []string{"doctor"}).Update("handled_by", displayName).Error
 	}
 	log.Println("Triage record table is ready")
 
@@ -190,12 +259,58 @@ func initializeBot(ctx context.Context) error {
 	}
 	globalReviewRunner = adk.NewTypedRunner(adk.TypedRunnerConfig[*schema.AgenticMessage]{Agent: globalReviewAgent})
 
+	intentAgent, buildErr := agent.NewAgentBuilder(cm).WithName("intent-agent").WithDescription("??????????").WithInstruction(specialistInstruction("intent")).Build(ctx)
+	if buildErr != nil {
+		return fmt.Errorf("new intent agent fail: %v", buildErr)
+	}
+	globalIntentRunner = adk.NewTypedRunner(adk.TypedRunnerConfig[*schema.AgenticMessage]{Agent: intentAgent})
+
+	riskAgent, buildErr := agent.NewAgentBuilder(cm).WithName("risk-agent").WithDescription("????????").WithInstruction(specialistInstruction("risk")).Build(ctx)
+	if buildErr != nil {
+		return fmt.Errorf("new risk agent fail: %v", buildErr)
+	}
+	globalRiskRunner = adk.NewTypedRunner(adk.TypedRunnerConfig[*schema.AgenticMessage]{Agent: riskAgent})
+
+	departmentAgent, buildErr := agent.NewAgentBuilder(cm).WithName("department-agent").WithDescription("????????").WithInstruction(specialistInstruction("department")).Build(ctx)
+	if buildErr != nil {
+		return fmt.Errorf("new department agent fail: %v", buildErr)
+	}
+	globalDepartmentRunner = adk.NewTypedRunner(adk.TypedRunnerConfig[*schema.AgenticMessage]{Agent: departmentAgent})
+
+	historyAgent, buildErr := agent.NewAgentBuilder(cm).WithName("history-agent").WithDescription("???????????").WithInstruction(specialistInstruction("history")).Build(ctx)
+	if buildErr != nil {
+		return fmt.Errorf("new history agent fail: %v", buildErr)
+	}
+	globalHistoryRunner = adk.NewTypedRunner(adk.TypedRunnerConfig[*schema.AgenticMessage]{Agent: historyAgent})
+
+	medicationAgent, buildErr := agent.NewAgentBuilder(cm).WithName("medication-safety-agent").WithDescription("?????????").WithInstruction(specialistInstruction("medication")).Build(ctx)
+	if buildErr != nil {
+		return fmt.Errorf("new medication agent fail: %v", buildErr)
+	}
+	globalMedicationRunner = adk.NewTypedRunner(adk.TypedRunnerConfig[*schema.AgenticMessage]{Agent: medicationAgent})
+
+	emergencyAgent, buildErr := agent.NewAgentBuilder(cm).WithName("emergency-agent").WithDescription("???????120??").WithInstruction(specialistInstruction("emergency")).Build(ctx)
+	if buildErr != nil {
+		return fmt.Errorf("new emergency agent fail: %v", buildErr)
+	}
+	globalEmergencyRunner = adk.NewTypedRunner(adk.TypedRunnerConfig[*schema.AgenticMessage]{Agent: emergencyAgent})
+
+	supervisorAgent, buildErr := agent.NewAgentBuilder(cm).WithName("supervisor-agent").WithDescription("??? Agent ?????????").WithInstruction(supervisorInstruction()).Build(ctx)
+	if buildErr != nil {
+		return fmt.Errorf("new supervisor agent fail: %v", buildErr)
+	}
+	globalSupervisorRunner = adk.NewTypedRunner(adk.TypedRunnerConfig[*schema.AgenticMessage]{Agent: supervisorAgent})
+
 	return nil
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
+		return
+	}
+	if _, ok := currentPatient(r); !ok {
+		http.Redirect(w, r, "/patient/login", http.StatusSeeOther)
 		return
 	}
 	writeHTMLPage(w, patientPage)
@@ -226,6 +341,11 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	patient, ok := currentPatient(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	req.Message = strings.TrimSpace(req.Message)
 	if req.Message == "" {
 		http.Error(w, "Message is required", http.StatusBadRequest)
@@ -236,7 +356,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	if sessionID == "" {
 		sessionID = utils.GetULID()
 	}
-	ctx := r.Context()
+	w.Header().Set("X-Session-ID", sessionID)
 	writer := sse.NewWriter(sessionID, w)
 	if writer == nil {
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
@@ -244,72 +364,14 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer writer.Close()
 
-	runOptions := []adk.AgentRunOption{adk.WithSessionValues(map[string]any{
-		"userID": "sse-user", "sessionID": sessionID,
-	})}
-
-	if needsAnswerReview(req.Message) {
-		draft, err := collectAgentReply(ctx, globalRunner, []*schema.AgenticMessage{schema.UserAgenticMessage(req.Message)}, runOptions...)
-		if err != nil {
-			log.Printf("reviewed triage draft failed: %v", err)
-			_ = writeTextAsOpenAIStream(writer, "\u5bfc\u8bca\u670d\u52a1\u6682\u65f6\u65e0\u6cd5\u5b8c\u6210\u5224\u65ad\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002")
-			_ = writer.WriteDone()
-			return
-		}
-		finalAnswer := draft
-		reviewCtx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
-		reviewed, review, reviewErr := reviewAnswer(reviewCtx, req.Message, draft)
-		cancel()
-		if reviewErr != nil {
-			log.Printf("triage answer review degraded: %v", reviewErr)
-		} else {
-			finalAnswer = reviewed
-			log.Printf("triage answer reviewed: session=%s approved=%t", sessionID, review.Approved)
-		}
-		if err := writeTextAsOpenAIStream(writer, finalAnswer); err != nil {
-			return
-		}
-		_ = writer.WriteDone()
-		if strings.TrimSpace(finalAnswer) != "" {
-			version := nextTriageExtractionVersion(sessionID)
-			go extractAndSaveTriageRecord(sessionID, req.Message, finalAnswer, version)
-		}
+	result := newTriageHarness().Run(r.Context(), triageHarnessInput{SessionID: sessionID, PatientPhone: patient.Phone, UserMessage: req.Message})
+	if err := writeTextAsOpenAIStream(writer, result.Answer); err != nil {
 		return
 	}
-
-	iter := globalRunner.Run(ctx, []*schema.AgenticMessage{schema.UserAgenticMessage(req.Message)}, runOptions...)
-	var assistantReply strings.Builder
-	for {
-		event, ok := iter.Next()
-		if !ok {
-			break
-		}
-		if event.Err != nil {
-			log.Printf("Event error: %v", event.Err)
-			break
-		}
-		if event.Output == nil || event.Output.MessageOutput == nil {
-			continue
-		}
-		msg, err := event.Output.MessageOutput.GetMessage()
-		if err != nil || msg == nil {
-			continue
-		}
-		if agmsg.Text(msg) == "" && !agmsg.HasFunctionToolCall(msg) {
-			continue
-		}
-		assistantReply.WriteString(agmsg.Text(msg))
-		openaiResp := adapter.MessageToOpenaiStreamResponse(msg, 0)
-		if openaiResp == nil {
-			continue
-		}
-		if err := writer.WriteJSONData(openaiResp); err != nil {
-			break
-		}
-	}
 	_ = writer.WriteDone()
-	if reply := strings.TrimSpace(assistantReply.String()); reply != "" {
+	if result.Answer != "" {
 		version := nextTriageExtractionVersion(sessionID)
-		go extractAndSaveTriageRecord(sessionID, req.Message, reply, version)
+		ragEvidence, _ := json.Marshal(result.KnowledgeHits)
+		go extractAndSaveTriageRecord(sessionID, patient.Phone, req.Message, result.Answer, string(ragEvidence), version)
 	}
 }

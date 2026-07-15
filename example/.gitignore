@@ -1,0 +1,29 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Build outputs
+*.exe
+*.exe~
+*.test
+*.out
+
+# Runtime logs
+*.log
+
+# Temporary/editor files
+*.tmp
+*.bak
+*~
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local databases and coverage
+*.db
+*.sqlite
+*.sqlite3
+coverage.out
+performance-report*.json
